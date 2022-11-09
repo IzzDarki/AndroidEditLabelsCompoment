@@ -55,9 +55,9 @@ class EditLabelsComponent(
      * @param labelsChipGroup Used as a container for all label chips
      * @param labelsAddChip Must be inside [labelsChipGroup].
      *  Clicking this chip will display a UI for the user to create a new label
-     * @param separator See [separator]
-     * @param allLabels See [allLabels]
-     * @param allowNewLabels See [allLabels]
+     * @param separator See [EditLabelsComponent.separator]
+     * @param allLabels See [EditLabelsComponent.allLabels]
+     * @param allowNewLabels See [EditLabelsComponent.allLabels]
      * @param onLabelChanged Gets called when a new label is added and when a label is removed
      *  See [onLabelAdded] and [onLabelRemoved]
      */
@@ -103,7 +103,7 @@ class EditLabelsComponent(
      * Displays given labels
      * @param labels List of labels to display
      */
-    fun displayLabels(labels: Set<String>) {
+    fun displayLabels(labels: Collection<String>) {
         for (label in labels) {
             // Add label chip at the end
             addChipToLabelsWithoutCallback(label, internalCurrentLabels.size + 1)
