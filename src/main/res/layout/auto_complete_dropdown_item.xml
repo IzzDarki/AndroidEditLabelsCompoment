@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.textview.MaterialTextView
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
 
     android:id="@android:id/text1"
     android:layout_width="match_parent"
@@ -8,4 +9,5 @@
     android:singleLine="true"
     android:ellipsize="marquee"
     style="?android:attr/dropDownItemStyle"
-    android:textAppearance="?android:attr/textAppearanceSmallPopupMenu"/>
+    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+    tools:text="Example item"/>
