@@ -1,6 +1,8 @@
 package com.izzdarki.editlabelscomponent
 
 import android.app.Activity
+import android.content.Context
+import android.util.Log
 import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import android.widget.*
@@ -10,6 +12,7 @@ import com.izzdarki.editlabelscomponent.Utility.showKeyboard
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import java.util.*
+import kotlin.collections.HashMap
 
 /**
  * Using this component enables an activity to create an UI for editing labels
@@ -28,15 +31,13 @@ import java.util.*
  * @property allowNewLabels See [allLabels]
  * @property onLabelAdded Called when a new label is added
  * @property onLabelRemoved Called when a label is removed
- *
- * @constructor
- * @param labelsChipGroup Used as a container for all label chips
- * @param labelsAddChip Must be inside [labelsChipGroup].
- *  Clicking this chip will display a UI for the user to create a new label
- *  @param separator See [separator]
- *  @param allLabels See [allLabels]
- *  @param allowNewLabels See [allLabels]
- *  @param onLabelAdded See [onLabelAdded]
+ * @property generateChip Function that is used to generate UI chips
+ *  text, closeIcon behaviour, click and long click behaviour will always be configured be this component and overwrite anything done in this function
+ * @property onCheckedChanged Called when a label is checked or unchecked, can also be used to style the chip
+ * @property checkableFunctionality If `true`, the component provides functionality to check and uncheck labels.
+ *  Use [currentLabelsCheckedMap] to get the checked status of all labels or [currentCheckedLabels], [currentUncheckedLabels] to get only checked or unchecked labels.
+ *  Use [onCheckedChanged] to add a callback that is called when a label is checked or unchecked.
+ *  Note that checkable functionality is completely independent from the [Chip.isChecked] and [Chip.isCheckable] attributes
  */
 class EditLabelsComponent(
     private var labelsChipGroup: ChipGroup,
@@ -44,39 +45,15 @@ class EditLabelsComponent(
     allLabels: SortedSet<String> = sortedSetOf(),
     var allowNewLabels: Boolean = true,
     var separator: String = DEFAULT_SEPARATOR,
-    var onLabelAdded: (label: String) -> Unit = {},
-    var onLabelRemoved: (label: String) -> Unit = {},
+    var onLabelAdded: (label: String, isChecked: Boolean) -> Unit = { _, _ -> },
+    var onLabelRemoved: (label: String, isChecked: Boolean) -> Unit = { _, _ -> },
+    var generateChip: (context: Context, label: String, isChecked: Boolean) -> Chip = { context, _, _ -> generateChipDefault(context) },
+    var onCheckedChanged: (label: String, isChecked: Boolean, chip: Chip) -> Unit = { _, _ , _-> },
+    var checkableFunctionality: Boolean = false
 ) {
     private val context get() = labelsAddChip.context
-    private val internalCurrentLabels = mutableSetOf<String>()
+    private val internalCurrentLabels = mutableMapOf<String, Boolean>()
     private var currentlyEditedLabel: String? = null
-
-    /**
-     * @param labelsChipGroup Used as a container for all label chips
-     * @param labelsAddChip Must be inside [labelsChipGroup].
-     *  Clicking this chip will display a UI for the user to create a new label
-     * @param separator See [EditLabelsComponent.separator]
-     * @param allLabels See [EditLabelsComponent.allLabels]
-     * @param allowNewLabels See [EditLabelsComponent.allLabels]
-     * @param onLabelChanged Gets called when a new label is added and when a label is removed
-     *  See [onLabelAdded] and [onLabelRemoved]
-     */
-    constructor(
-        labelsChipGroup: ChipGroup,
-        labelsAddChip: Chip,
-        allLabels: SortedSet<String> = sortedSetOf(),
-        allowNewLabels: Boolean = true,
-        separator: String = DEFAULT_SEPARATOR,
-        onLabelChanged: () -> Unit = {}
-    ) : this(
-        labelsChipGroup,
-        labelsAddChip,
-        allLabels,
-        allowNewLabels,
-        separator,
-        onLabelAdded = { onLabelChanged() },
-        onLabelRemoved = { onLabelChanged() }
-    )
 
     var allLabels: SortedSet<String> = sortedSetOf()
         set(value) {
@@ -93,7 +70,7 @@ class EditLabelsComponent(
 
     init {
         this.allLabels = allLabels
-        // labels add chip
+        // initialize labels add chip
         labelsAddChip.setOnClickListener {
             addEditTextToLabels(context.getString(R.string.new_label))
         }
@@ -103,23 +80,60 @@ class EditLabelsComponent(
      * Displays given labels
      * @param labels List of labels to display
      */
-    fun displayLabels(labels: Collection<String>) {
-        for (label in labels) {
+    fun displayLabels(labels: Collection<String>) = displayLabelsWithCheckedStatus(labels.map { Pair(it, IS_CHECKED_DEFAULT) })
+
+    fun displayLabelsWithCheckedStatus(labels: Collection<Pair<String, Boolean>>) {
+        for ((label, isChecked) in labels) {
             // Add label chip at the end
-            addChipToLabelsWithoutCallback(label, internalCurrentLabels.size + 1)
-            internalCurrentLabels.add(label)
+            addChipToLabelsWithoutCallback(label, isChecked, internalCurrentLabels.size + 1)
+            internalCurrentLabels[label] = isChecked
         }
     }
 
     /**
-     * Get the labels that are currently added and visible to the user
+     * Set callback that is called when a label is added or removed to the component
+     * Overwrites [onLabelAdded], [onLabelRemoved]
      */
-    val currentLabels get() = internalCurrentLabels.toSet()
+    fun setOnLabelChanged(callback: (label: String, isChecked: Boolean, removed: Boolean) -> Unit) {
+        onLabelAdded = { label, isChecked -> callback(label, isChecked, false) }
+        onLabelRemoved = { label, isChecked -> callback(label, isChecked, true) }
+    }
+
+    /**
+     * Get the chip that corresponds to a given `label`, or `null` if there is no such chip (which is also the case when the given `label` is currently edited)
+     */
+    fun getChipOfLabel(label: String): Chip? {
+        return labelsChipGroup.allViews.firstOrNull { it is Chip && it !== labelsAddChip && it.text == label } as? Chip
+    }
+
+    /**
+     * Get the labels, that are currently added and visible to the user
+     */
+    val currentLabels get() = internalCurrentLabels.keys.toSet()
+
+    /**
+     * Get the labels, that are currently added and visible to the user together with their checked status
+     */
+    val currentLabelsCheckedMap get() = internalCurrentLabels.toMap()
+
+    /**
+     * Get all checked labels, that are currently added and visible to the user
+     */
+    val currentCheckedLabels get() = internalCurrentLabels
+        .filter { (_, checked) -> checked }
+        .keys.toSet()
+
+    /**
+     * Get all unchecked labels, that are currently added and visible to the user
+     */
+    val currentUncheckedLabels get() = internalCurrentLabels
+        .filter { (_, isChecked) -> !isChecked }
+        .keys.toSet()
 
     /**
      * For being able to finish editing chips when the user clicks elsewhere,
      * activities must override [Activity.dispatchTouchEvent] and call this method from there.
-     * It finished editing in certain situations
+     * It finishes editing in certain situations
      *
      * @return
      *  `false`, when touch event should be processed as usual => your overridden `dispatchTouchEvent` needs to call `super.dispatchTouchEvent` and return its value
@@ -160,17 +174,25 @@ class EditLabelsComponent(
         return false // dispatch touch events as usual
     }
 
-    private fun addChipToLabels(label: String, index: Int = 1) {
-        addChipToLabelsWithoutCallback(label, index)
-        if (label !in internalCurrentLabels) {
-            internalAddLabel(label)
-        }
+
+
+    private fun addChipToLabels(label: String, isChecked: Boolean, index: Int = 1) {
+        addChipToLabelsWithoutCallback(label, isChecked, index)
+        internalAddLabel(label, isChecked) // only add label internally if it is not already added
     }
 
-    private fun addChipToLabelsWithoutCallback(text: String, index: Int = 1) {
-        val chip = Chip(context)
+    private fun addChipToLabelsWithoutCallback(text: String, isChecked: Boolean, index: Int = 1) {
+        val chip = generateChip(context, text, isChecked) // generate chip using function given in constructor
         chip.text = text
-        chip.isCloseIconVisible = true
+        if (checkableFunctionality) {
+            chip.setOnClickListener {
+                val nowChecked = internalCurrentLabels[text]!!.not()
+                internalCurrentLabels[text] = nowChecked
+                onCheckedChanged(text, nowChecked, chip) // can be used to style the chip
+                Log.d("asdf", "addChipToLabelsWithoutCallback: $currentCheckedLabels, $currentUncheckedLabels")
+            }
+        }
+        chip.isCloseIconVisible = true // this functionality is essential to this UI component
         chip.setOnCloseIconClickListener {
             labelsChipGroup.removeView(chip)
             internalRemoveLabel(text)
@@ -196,7 +218,9 @@ class EditLabelsComponent(
         }
 
         editText.setAdapter(
-            ArrayAdapter(context, R.layout.auto_complete_dropdown_item, allLabels.filter { it !in internalCurrentLabels })
+            ArrayAdapter(context, R.layout.auto_complete_dropdown_item, allLabels.filter {
+                it !in internalCurrentLabels.keys
+            })
         )
         editText.onItemClickListener = AdapterView.OnItemClickListener { _, _, _, _ ->
             finishEditingChip(editText)
@@ -224,12 +248,13 @@ class EditLabelsComponent(
         labelsChipGroup.removeView(editText)
 
         val newLabel = editText.text.toString().trim()
+
         if (isNewLabelOkOrShowError(newLabel))
-            addChipToLabels(newLabel, index)
-        else if (currentlyEditedLabel != null) {
+            addChipToLabels(newLabel, internalCurrentLabels[currentlyEditedLabel] ?: IS_CHECKED_DEFAULT, index)
+        else if (currentlyEditedLabel != null) { // should always be true
             val labelBeforeEdit = currentlyEditedLabel!!
             currentlyEditedLabel = null
-            addChipToLabelsWithoutCallback(labelBeforeEdit, index)
+            addChipToLabelsWithoutCallback(labelBeforeEdit, internalCurrentLabels[labelBeforeEdit] ?: IS_CHECKED_DEFAULT, index)
         }
     }
 
@@ -237,15 +262,15 @@ class EditLabelsComponent(
      * Adds label internally and calls [onLabelAdded],
      * but only if the label is not already added
      */
-    private fun internalAddLabel(label: String) {
-        if (label !in internalCurrentLabels) {
+    private fun internalAddLabel(label: String, isChecked: Boolean) {
+        if (label !in internalCurrentLabels.keys) {
             if (currentlyEditedLabel != null) {
                 val labelBeforeEdit = currentlyEditedLabel!!
                 currentlyEditedLabel = null
                 internalRemoveLabel(labelBeforeEdit)
             }
-            internalCurrentLabels.add(label)
-            onLabelAdded(label)
+            internalCurrentLabels[label] = isChecked
+            onLabelAdded(label, isChecked)
         }
     }
 
@@ -254,9 +279,10 @@ class EditLabelsComponent(
      * but only if the label was added before
      */
     private fun internalRemoveLabel(label: String) {
-        if (label in internalCurrentLabels) {
+        if (label in internalCurrentLabels.keys) {
+            val wasChecked = internalCurrentLabels[label]!!
             internalCurrentLabels.remove(label)
-            onLabelRemoved(label)
+            onLabelRemoved(label, wasChecked)
         }
     }
 
@@ -281,7 +307,7 @@ class EditLabelsComponent(
             )
             Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
             return false
-        } else if (newLabel in internalCurrentLabels && newLabel != currentlyEditedLabel) {
+        } else if (newLabel in internalCurrentLabels.keys && newLabel != currentlyEditedLabel) {
             Toast.makeText(context, R.string.error_label_already_added, Toast.LENGTH_SHORT).show()
             return false
         } else if (!allowNewLabels && newLabel !in allLabels) {
@@ -294,5 +320,11 @@ class EditLabelsComponent(
 
     companion object {
         const val DEFAULT_SEPARATOR = "§]7%}$"
+        const val IS_CHECKED_DEFAULT = true
+        fun generateChipDefault(context: Context): Chip {
+            val chip = Chip(context)
+            chip.isCheckable = false
+            return chip
+        }
     }
 }
